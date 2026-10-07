@@ -5,7 +5,7 @@ import { unzipSync } from "fflate";
 
 const upstreamVersion = process.env.GPROXY_RELEASE_VERSION || "v4.1.0";
 const upstreamBase = `https://github.com/LeenHawk/gproxy/releases/download/${upstreamVersion}`;
-const patchedBase = "https://github.com/axzhang1216/gproxy-v4-20261006-dfa2e/releases/download/gproxy-v4.1.0-cachefix";
+const patchedBase = "https://github.com/axzhang1216/gproxy-v4-20261006-dfa2e/releases/download/gproxy-v4.1.0-cachefix2";
 const root = new URL(".", import.meta.url);
 
 async function download(base, name) {
