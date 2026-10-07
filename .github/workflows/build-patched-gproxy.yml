@@ -4,135 +4,76 @@ on:
   workflow_dispatch:
   push:
     branches: [dev]
-    paths:
-      - .github/workflows/build-patched-gproxy.yml
 
 permissions:
   contents: write
 
-env:
-  UPSTREAM_COMMIT: 4b446bdcf781b5c871300bef4c019f36becfdb93
-  PATCH_TAG: gproxy-v4.1.0-cachefix
-
 jobs:
-  console:
-    name: Console bundle
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: LeenHawk/gproxy
-          ref: 4b446bdcf781b5c871300bef4c019f36becfdb93
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: console/package.json
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: pnpm
-          cache-dependency-path: console/pnpm-lock.yaml
-      - run: pnpm --dir console install --frozen-lockfile
-      - run: pnpm --dir console build
-        env:
-          GPROXY_BUILD_HASH: 4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix
-      - uses: actions/upload-artifact@v4
-        with:
-          name: console-dist
-          path: console/dist
-          include-hidden-files: true
-          retention-days: 1
-
-  serverless:
-    name: Serverless (${{ matrix.arch }})
-    needs: console
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
-          - arch: aarch64
-            target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    env:
-      TARGET_TRIPLE: ${{ matrix.target }}
-      ARTIFACT_NAME: gproxy-serverless-linux-${{ matrix.arch }}-musl
-      GPROXY_BUILD_HASH: 4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: LeenHawk/gproxy
-          ref: 4b446bdcf781b5c871300bef4c019f36becfdb93
-      - uses: actions/download-artifact@v4
-        with:
-          name: console-dist
-          path: crates/gproxy-host-axum/assets/web
-      - name: Patch PostgreSQL cache conflict expressions
-        shell: python
+      - name: Check out upstream GProxy v4.1.0
         run: |
+          git clone https://github.com/LeenHawk/gproxy.git upstream
+          cd upstream
+          git checkout 4b446bdcf781b5c871300bef4c019f36becfdb93
+
+      - name: Build console assets
+        run: |
+          cd upstream
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm --dir console install --frozen-lockfile
+          GPROXY_BUILD_HASH=4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix pnpm --dir console build
+
+      - name: Patch PostgreSQL cache conflict expressions
+        run: |
+          python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("crates/gproxy-store/src/cache.rs")
+          path = Path('upstream/crates/gproxy-store/src/cache.rs')
           text = path.read_text()
-
           replacements = {
-              "let expired = cache_entry::Column::ExpiresAtMs.lte(now);": """let expired = Expr::col((
+              'let expired = cache_entry::Column::ExpiresAtMs.lte(now);': '''let expired = Expr::col((
                               cache_entry::Entity,
                               cache_entry::Column::ExpiresAtMs,
                           ))
-                          .lte(now);""",
-              ".finally(Expr::col(cache_entry::Column::Value))": ".finally(Expr::col((cache_entry::Entity, cache_entry::Column::Value)))",
-              ".finally(Expr::col(cache_entry::Column::Version))": ".finally(Expr::col((cache_entry::Entity, cache_entry::Column::Version)))",
-              ".finally(Expr::col(cache_entry::Column::ExpiresAtMs))": ".finally(Expr::col((cache_entry::Entity, cache_entry::Column::ExpiresAtMs)))",
+                          .lte(now);''',
+              '.finally(Expr::col(cache_entry::Column::Value))': '.finally(Expr::col((cache_entry::Entity, cache_entry::Column::Value)))',
+              '.finally(Expr::col(cache_entry::Column::Version))': '.finally(Expr::col((cache_entry::Entity, cache_entry::Column::Version)))',
+              '.finally(Expr::col(cache_entry::Column::ExpiresAtMs))': '.finally(Expr::col((cache_entry::Entity, cache_entry::Column::ExpiresAtMs)))',
           }
           for old, new in replacements.items():
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"expected exactly one occurrence of {old!r}, found {count}")
+                  raise SystemExit(f'expected exactly one occurrence of {old!r}, found {count}')
               text = text.replace(old, new)
-
           path.write_text(text)
-      - name: Show and validate patch
-        run: |
+          PY
+          cd upstream
           git diff --check
           git diff -- crates/gproxy-store/src/cache.rs
-      - name: Build patched serverless binary
-        run: bash scripts/build-serverless.sh "$TARGET_TRIPLE"
-      - name: Smoke test binary
-        run: target/${{ matrix.target }}/release/gproxy-serverless --version
-      - name: Package binary
-        run: |
-          mkdir -p dist/release
-          zip -j "dist/release/${ARTIFACT_NAME}.zip" "target/${TARGET_TRIPLE}/release/gproxy-serverless"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: serverless-${{ matrix.arch }}
-          path: dist/release/${{ env.ARTIFACT_NAME }}.zip
-          if-no-files-found: error
-          retention-days: 1
 
-  publish:
-    name: Publish patched binaries
-    needs: serverless
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: serverless-*
-          path: dist/release
-          merge-multiple: true
-      - name: Create checksums
+      - name: Build patched x86_64 serverless binary
         run: |
-          cd dist/release
-          sha256sum gproxy-serverless-linux-*-musl.zip > SHA256SUMS
-      - name: Publish release
+          cd upstream
+          export GPROXY_BUILD_HASH=4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix
+          bash scripts/build-serverless.sh x86_64-unknown-linux-musl
+          target/x86_64-unknown-linux-musl/release/gproxy-serverless --version
+
+      - name: Package patched binary
+        run: |
+          mkdir -p dist
+          zip -j dist/gproxy-serverless-linux-x86_64-musl.zip upstream/target/x86_64-unknown-linux-musl/release/gproxy-serverless
+          cd dist
+          sha256sum gproxy-serverless-linux-x86_64-musl.zip > SHA256SUMS
+
+      - name: Publish patched release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete "$PATCH_TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
-          gh release create "$PATCH_TAG" dist/release/*.zip dist/release/SHA256SUMS \
+          gh release delete gproxy-v4.1.0-cachefix --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release create gproxy-v4.1.0-cachefix dist/gproxy-serverless-linux-x86_64-musl.zip dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --title "GProxy v4.1.0 PostgreSQL cache fix" \
-            --notes "Patched from upstream v4.1.0 (${UPSTREAM_COMMIT}). Qualifies cache_entries columns in the PostgreSQL ON CONFLICT path to avoid SQLSTATE 42702 (column reference value is ambiguous)."
+            --notes "Patched from upstream v4.1.0 (4b446bdcf781b5c871300bef4c019f36becfdb93). Qualifies cache_entries columns in the PostgreSQL ON CONFLICT path to avoid SQLSTATE 42702: column reference value is ambiguous."
