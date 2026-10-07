@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: LeenHawk/gproxy
-          ref: ${{ env.UPSTREAM_COMMIT }}
+          ref: 4b446bdcf781b5c871300bef4c019f36becfdb93
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: console/package.json
@@ -34,7 +34,7 @@ jobs:
       - run: pnpm --dir console install --frozen-lockfile
       - run: pnpm --dir console build
         env:
-          GPROXY_BUILD_HASH: ${{ env.UPSTREAM_COMMIT }}-cachefix
+          GPROXY_BUILD_HASH: 4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix
       - uses: actions/upload-artifact@v4
         with:
           name: console-dist
@@ -59,12 +59,12 @@ jobs:
     env:
       TARGET_TRIPLE: ${{ matrix.target }}
       ARTIFACT_NAME: gproxy-serverless-linux-${{ matrix.arch }}-musl
-      GPROXY_BUILD_HASH: ${{ env.UPSTREAM_COMMIT }}-cachefix
+      GPROXY_BUILD_HASH: 4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix
     steps:
       - uses: actions/checkout@v4
         with:
           repository: LeenHawk/gproxy
-          ref: ${{ env.UPSTREAM_COMMIT }}
+          ref: 4b446bdcf781b5c871300bef4c019f36becfdb93
       - uses: actions/download-artifact@v4
         with:
           name: console-dist
