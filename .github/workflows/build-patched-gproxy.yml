@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [dev]
+    paths:
+      - .github/workflows/build-patched-gproxy.yml
 
 permissions:
   contents: write
@@ -24,7 +26,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@9.15.9 --activate
           pnpm --dir console install --frozen-lockfile
-          GPROXY_BUILD_HASH=4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix pnpm --dir console build
+          GPROXY_BUILD_HASH=4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix2 pnpm --dir console build
 
       - name: Patch PostgreSQL cache conflict expressions
         run: |
@@ -42,6 +44,14 @@ jobs:
               '.finally(Expr::col(cache_entry::Column::Value))': '.finally(Expr::col((cache_entry::Entity, cache_entry::Column::Value)))',
               '.finally(Expr::col(cache_entry::Column::Version))': '.finally(Expr::col((cache_entry::Entity, cache_entry::Column::Version)))',
               '.finally(Expr::col(cache_entry::Column::ExpiresAtMs))': '.finally(Expr::col((cache_entry::Entity, cache_entry::Column::ExpiresAtMs)))',
+              'let expired = cache_counter::Column::ExpiresAtMs.lte(now);': '''let expired = Expr::col((
+                              cache_counter::Entity,
+                              cache_counter::Column::ExpiresAtMs,
+                          ))
+                          .lte(now);''',
+              '.finally(Expr::col(cache_counter::Column::Value))': '.finally(Expr::col((cache_counter::Entity, cache_counter::Column::Value)))',
+              '.finally(Expr::col(cache_counter::Column::Generation))': '.finally(Expr::col((cache_counter::Entity, cache_counter::Column::Generation)))',
+              '.finally(Expr::col(cache_counter::Column::ExpiresAtMs))': '.finally(Expr::col((cache_counter::Entity, cache_counter::Column::ExpiresAtMs)))',
           }
           for old, new in replacements.items():
               count = text.count(old)
@@ -57,7 +67,7 @@ jobs:
       - name: Build patched x86_64 serverless binary
         run: |
           cd upstream
-          export GPROXY_BUILD_HASH=4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix
+          export GPROXY_BUILD_HASH=4b446bdcf781b5c871300bef4c019f36becfdb93-cachefix2
           bash scripts/build-serverless.sh x86_64-unknown-linux-musl
           target/x86_64-unknown-linux-musl/release/gproxy-serverless --version
 
@@ -72,8 +82,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete gproxy-v4.1.0-cachefix --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
-          gh release create gproxy-v4.1.0-cachefix dist/gproxy-serverless-linux-x86_64-musl.zip dist/SHA256SUMS \
+          gh release delete gproxy-v4.1.0-cachefix2 --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release create gproxy-v4.1.0-cachefix2 dist/gproxy-serverless-linux-x86_64-musl.zip dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
-            --title "GProxy v4.1.0 PostgreSQL cache fix" \
-            --notes "Patched from upstream v4.1.0 (4b446bdcf781b5c871300bef4c019f36becfdb93). Qualifies cache_entries columns in the PostgreSQL ON CONFLICT path to avoid SQLSTATE 42702: column reference value is ambiguous."
+            --title "GProxy v4.1.0 PostgreSQL cache fix 2" \
+            --notes "Patched from upstream v4.1.0 (4b446bdcf781b5c871300bef4c019f36becfdb93). Qualifies cache_entries and cache_counters columns in PostgreSQL ON CONFLICT paths to avoid SQLSTATE 42702 ambiguous-column failures."
